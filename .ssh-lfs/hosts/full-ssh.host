@@ -1,0 +1,6 @@
+# Use this form when the connection details are defined in this host file.
+# Run it with: /path/to/ssh-lfs push full-ssh
+SSH_HOST=example.com
+SSH_USER=deploy
+SSH_PORT=22
+REMOTE_BASE=/srv/ssh-lfs

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# ssh-lfs synchronizes files over SSH with rsync, using the project's .ssh-lfs configuration.
+#
+# Run: /path/to/ssh-lfs <push|pull> <host-name>
+# - The directory containing this script is the configuration root. It always reads:
+#     <script-directory>/.ssh-lfs/ssh-lfs.config
+#     <script-directory>/.ssh-lfs/hosts/<host-name>.host
+# - The directory in which the command is run (pwd) is the local sync root. This
+#   lets you invoke the script from any working directory without copying config files.
+# - Every relative path in the manifest maps to both sides:
+#     local:  <current-directory>/<relative-path>
+#     remote: <REMOTE_BASE>/<relative-path>
+#
+# This script requires bash, ssh, and rsync. SSH key authentication is recommended
+# so that synchronization does not repeatedly request a password.
+set -euo pipefail
+
+PROGRAM_NAME=${0##*/}
+
+usage() {
+  # Keep argument errors brief; see readme.md at the project root for full details.
+  cat <<EOF
+Usage: $PROGRAM_NAME <push|pull> <host-name>
+
+Host configuration: .ssh-lfs/hosts/<host-name>.host
+Sync manifest:      .ssh-lfs/ssh-lfs.config
+EOF
+}
+
+fail() {
+  # Send all errors to stderr and terminate the script consistently.
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+  exit 1
+}
+
+trim() {
+  # Configuration permits surrounding whitespace; remove it after reading a value.
+  local value=$1
+  value=${value#"${value%%[![:space:]]*}"}
+  value=${value%"${value##*[![:space:]]}"}
+  printf '%s' "$value"
+}
+
+[[ $# -eq 2 ]] || { usage >&2; exit 2; }
+direction=$1
+host_name=$2
+case $direction in push|pull) ;; *) usage >&2; exit 2 ;; esac
+
+# Locate configuration from the script itself, rather than from the current directory.
+# Therefore /path/to/ssh-lfs always uses its accompanying .ssh-lfs configuration.
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd -P)
+project_root=$script_dir
+config_dir=$project_root/.ssh-lfs
+manifest=$config_dir/ssh-lfs.config
+# Unlike the configuration root, local_base deliberately records the directory from
+# which the user invoked the command; it is the base for local sync paths.
+local_base=$(pwd -P)
+
+# The host name becomes part of a file path, so only ordinary filename characters
+# are allowed. This prevents a parameter from addressing files outside hosts/.
+[[ $host_name =~ ^[A-Za-z0-9._-]+$ ]] || fail "Invalid host name: $host_name"
+host_config=$config_dir/hosts/$host_name.host
+[[ -f $manifest ]] || fail "Sync manifest not found: $manifest"
+[[ -f $host_config ]] || fail "Host configuration not found: $host_config"
+
+# Host configuration is never sourced: source could execute arbitrary shell code.
+# Only the KEY=VALUE fields below are accepted; blank lines and # comments are skipped.
+# SSH_PORT is optional. When omitted, SSH uses the matching entry in ~/.ssh/config
+# (or its own default port) without an overriding -p option.
+SSH_HOST=
+SSH_USER=
+SSH_PORT=
+REMOTE_BASE=
+while IFS= read -r raw_line || [[ -n $raw_line ]]; do
+  line=$(trim "$raw_line")
+  [[ -z $line || $line == \#* ]] && continue
+  [[ $line == *=* ]] || fail "Invalid line in $host_config: $raw_line"
+  key=$(trim "${line%%=*}")
+  value=$(trim "${line#*=}")
+  case $key in
+    SSH_HOST) SSH_HOST=$value ;;
+    SSH_USER) SSH_USER=$value ;;
+    SSH_PORT) SSH_PORT=$value ;;
+    REMOTE_BASE) REMOTE_BASE=$value ;;
+    *) fail "Unsupported key in $host_config: $key" ;;
+  esac
+done < "$host_config"
+
+[[ -n $SSH_HOST && -n $REMOTE_BASE ]] || fail "$host_config must define SSH_HOST and REMOTE_BASE"
+[[ -z $SSH_PORT || $SSH_PORT =~ ^[0-9]+$ ]] || fail "SSH_PORT must be a port number"
+remote_target=$SSH_HOST
+[[ -n $SSH_USER ]] && remote_target=$SSH_USER@$SSH_HOST
+# Keep SSH options in an array so an omitted SSH_PORT does not override the user's
+# ~/.ssh/config. The same options are used for mkdir and for rsync's transport.
+ssh_options=()
+[[ -n $SSH_PORT ]] && ssh_options=(-p "$SSH_PORT")
+
+# Create the remote base before transferring. Invalid host, port, user, or
+# authentication settings fail here instead of later with a less clear rsync error.
+ssh "${ssh_options[@]}" -- "$remote_target" "mkdir -p -- $(printf '%q' "$REMOTE_BASE")"
+
+line_number=0
+while IFS= read -r raw_line || [[ -n $raw_line ]]; do
+  line_number=$((line_number + 1))
+  line=$(trim "$raw_line")
+  [[ -z $line || $line == \#* ]] && continue
+  # One manifest line represents one relative path, used unchanged on both sides.
+  relative_path=$line
+  # Disallow absolute paths and .. directory traversal. This keeps the remote path
+  # inside REMOTE_BASE and prevents pull from writing outside the current directory.
+  # Ordinary names containing ".." (for example, a..b) remain valid.
+  [[ $relative_path != /* && $relative_path != .. && $relative_path != ../* && $relative_path != */../* && $relative_path != */.. ]] \
+    || fail "Line $line_number in $manifest must be a safe relative path"
+
+  # Form the two absolute paths by appending the same relative path to each base.
+  local_absolute=$local_base/$relative_path
+  remote_absolute=$REMOTE_BASE/$relative_path
+  if [[ $direction == push ]]; then
+    # push only accepts an existing local item. Create its remote parent, then transfer.
+    # rsync -a recursively preserves common attributes; --protect-args handles spaces.
+    [[ -e $local_absolute || -L $local_absolute ]] || fail "Local path not found: $relative_path"
+    printf 'push  %s -> %s:%s\n' "$relative_path" "$host_name" "$relative_path"
+    ssh "${ssh_options[@]}" -- "$remote_target" "mkdir -p -- $(printf '%q' "$(dirname -- "$remote_absolute")")"
+    rsync -a --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$local_absolute" "$remote_target:$remote_absolute"
+  else
+    # pull reverses that direction: create the local parent, then fetch the same mapping.
+    # If the remote item does not exist, rsync returns non-zero and set -e stops the script.
+    printf 'pull  %s:%s -> %s\n' "$host_name" "$relative_path" "$relative_path"
+    mkdir -p -- "$(dirname -- "$local_absolute")"
+    rsync -a --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$remote_target:$remote_absolute" "$local_absolute"
+  fi
+done < "$manifest"

@@ -1,0 +1,4 @@
+This is a sample file managed by ssh-lfs.
+
+Because `example_data/` is listed in .ssh-lfs/ssh-lfs.config, pushing from the
+project root copies this directory to REMOTE_BASE/example_data/ on the selected host.

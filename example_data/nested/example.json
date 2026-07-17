@@ -1,0 +1,5 @@
+{
+  "name": "ssh-lfs sample data",
+  "purpose": "Verify that nested directories are synchronized correctly",
+  "version": 1
+}

@@ -1,0 +1,2 @@
+# Local host configuration; do not commit machine-specific SSH details.
+.ssh-lfs/hosts/rtx3090.host

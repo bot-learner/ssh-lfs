@@ -1,0 +1,7 @@
+# Example using the fictional "example-server" Host alias in ~/.ssh/config.
+# Replace "example-server" with an actual Host alias from your own SSH configuration.
+# SSH obtains HostName, User, Port, IdentityFile, and other settings from that alias.
+# Run from the local project directory with:
+# /path/to/ssh-lfs push ssh-alias
+SSH_HOST=example-server
+REMOTE_BASE=/srv/example/ssh-lfs
