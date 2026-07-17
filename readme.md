@@ -4,7 +4,8 @@
 
 `ssh-lfs` is a small shell-based file synchronization tool. It transfers selected
 files and directories between a local working directory and a remote server over
-SSH, using `rsync`.
+SSH, using `rsync`. Run `ssh-lfs init <relative-path>` to create the `.ssh-lfs/`
+configuration template for a project.
 
 The sync list is stored in `.ssh-lfs/ssh-lfs.config`. Each line is one relative
 path. The same relative path is used on both sides:
@@ -14,9 +15,9 @@ local:  <current-working-directory>/<relative-path>
 remote: <REMOTE_BASE>/<relative-path>
 ```
 
-For example, if the list contains `example_data/`, a push from the project root
-copies `./example_data/` to `REMOTE_BASE/example_data/`. Use `push` to send local
-files to the remote host and `pull` to retrieve them.
+For example, if the list contains `example_data/`, a push run from the directory
+containing `example_data/` copies it to `REMOTE_BASE/example_data/`. Use `push`
+to send local files to the remote host and `pull` to retrieve them.
 
 ## 2. Quick Start
 
@@ -60,14 +61,27 @@ key authentication or another supported SSH authentication method before syncing
 your own host configuration. This directory can contain private SSH host names,
 usernames, and remote paths, so do not upload it to a repository.**
 
-1. Create a host configuration in `.ssh-lfs/hosts/`. Host files use the `.host`
-   suffix. You can copy the complete connection example:
+1. Initialize the project configuration from the directory containing the project:
 
    ```sh
-   cp .ssh-lfs/hosts/full-ssh.host .ssh-lfs/hosts/my-server.host
+   ssh-lfs init .
    ```
 
-   Then edit `my-server.host`:
+   For a new project directory, provide its relative path instead:
+
+   ```sh
+   ssh-lfs init my-project
+   cd my-project
+   ```
+
+   This creates `.ssh-lfs/hosts/ffu-ssh-example.host`,
+   `.ssh-lfs/hosts/ssh-alias-example.host`, and a fully commented
+   `.ssh-lfs/ssh-lfs.config` in the target directory. If `.ssh-lfs/` already
+   exists, `init` does not overwrite any files and reports that the project has
+   already been initialized.
+
+2. Edit one of the generated `.host` files in `.ssh-lfs/hosts/`. Use
+   `ffu-ssh-example.host` when the connection details belong in the host file:
 
    ```ini
    SSH_HOST=server.example.com
@@ -76,15 +90,15 @@ usernames, and remote paths, so do not upload it to a repository.**
    REMOTE_BASE=/srv/ssh-lfs
    ```
 
-   Alternatively, use an alias from `~/.ssh/config`. In that case, only these
-   two values are required:
+   Or edit `ssh-alias-example.host` to use an alias from `~/.ssh/config`. In
+   that case, only these two values are required:
 
    ```ini
    SSH_HOST=my-ssh-alias
    REMOTE_BASE=/srv/ssh-lfs
    ```
 
-2. Edit `.ssh-lfs/ssh-lfs.config` to list the relative files and directories to
+3. Edit `.ssh-lfs/ssh-lfs.config` to list the relative files and directories to
    synchronize. Blank lines and lines beginning with `#` are ignored:
 
    ```text
@@ -92,24 +106,22 @@ usernames, and remote paths, so do not upload it to a repository.**
    .env
    ```
 
-3. Run the command from the local directory that contains the listed paths.
-   From this repository root, use:
+4. Run the command from the initialized local project directory, which contains
+   both the listed paths and `.ssh-lfs/`:
 
    ```sh
-   ./ssh-lfs push my-server
-   ./ssh-lfs pull my-server
+   ssh-lfs push ffu-ssh-example
+   ssh-lfs pull ffu-ssh-example
    ```
 
-   To synchronize a different local directory, call the script by its absolute
-   path from that directory:
+   To synchronize a different local directory, first run `ssh-lfs init .` there.
+   Once initialized, simply run the installed command from that directory:
 
    ```sh
-   /path/to/ssh-lfs/ssh-lfs push my-server
+   ssh-lfs push ffu-ssh-example
    ```
 
-The repository includes `example_data/`, which is already enabled in the default
-manifest. You can test the setup from the repository root with:
-
-```sh
-./ssh-lfs push full-ssh
-```
+This repository includes `example_data/` as sample content. To synchronize a
+directory with that name in your own project, uncomment or add `example_data/`
+in `.ssh-lfs/ssh-lfs.config`, configure one of the generated host files, and run
+the corresponding `ssh-lfs push` command.

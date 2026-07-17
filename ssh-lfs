@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# ssh-lfs synchronizes files over SSH with rsync, using the project's .ssh-lfs configuration.
+# ssh-lfs synchronizes files over SSH with rsync, using a local .ssh-lfs configuration.
 #
-# Run: /path/to/ssh-lfs <push|pull> <host-name>
-# - The directory containing this script is the configuration root. It always reads:
-#     <script-directory>/.ssh-lfs/ssh-lfs.config
-#     <script-directory>/.ssh-lfs/hosts/<host-name>.host
-# - The directory in which the command is run (pwd) is the local sync root. This
-#   lets you invoke the script from any working directory without copying config files.
+# Run: ssh-lfs <push|pull> <host-name>
+#      ssh-lfs init <relative-path>
+# - The directory in which the command is run (pwd) is both the local sync root
+#   and the location from which push/pull loads .ssh-lfs/ configuration.
+# - init creates <current-directory>/<relative-path>/.ssh-lfs/ with example files.
 # - Every relative path in the manifest maps to both sides:
 #     local:  <current-directory>/<relative-path>
 #     remote: <REMOTE_BASE>/<relative-path>
@@ -18,9 +17,10 @@ set -euo pipefail
 PROGRAM_NAME=${0##*/}
 
 usage() {
-  # Keep argument errors brief; see readme.md at the project root for full details.
+  # Keep argument errors brief; see readme.md for full details.
   cat <<EOF
 Usage: $PROGRAM_NAME <push|pull> <host-name>
+       $PROGRAM_NAME init <relative-path>
 
 Host configuration: .ssh-lfs/hosts/<host-name>.host
 Sync manifest:      .ssh-lfs/ssh-lfs.config
@@ -41,20 +41,73 @@ trim() {
   printf '%s' "$value"
 }
 
+# A sync manifest and init target must remain below the current working directory.
+# Paths such as ../other-project and /tmp/project are rejected to prevent accidental
+# reads or writes outside the intended local project.
+is_safe_relative_path() {
+  local path=$1
+  [[ -n $path && $path != /* && $path != .. && $path != ../* && $path != */../* && $path != */.. ]]
+}
+
 [[ $# -eq 2 ]] || { usage >&2; exit 2; }
 direction=$1
+# The current directory intentionally provides both the local base and the project
+# configuration. This is important when ssh-lfs is installed in ~/.local/bin.
+local_base=$(pwd -P)
+
+if [[ $direction == init ]]; then
+  init_relative_path=$2
+  is_safe_relative_path "$init_relative_path" || fail "init requires a safe relative path"
+  # Keep the displayed target path clean for the common `init .` form.
+  if [[ $init_relative_path == . ]]; then
+    init_root=$local_base
+  else
+    init_root=$local_base/${init_relative_path#./}
+  fi
+  init_config_dir=$init_root/.ssh-lfs
+  # Existing configuration may contain user-specific host details. Never overwrite
+  # it, even partially: report that initialization has already been completed.
+  if [[ -e $init_config_dir ]]; then
+    printf 'ssh-lfs is already initialized: %s\n' "$init_config_dir"
+    exit 0
+  fi
+
+  # mkdir -p also permits initializing a new project directory in one command.
+  mkdir -p -- "$init_config_dir/hosts"
+  cat > "$init_config_dir/hosts/ffu-ssh-example.host" <<'EOF'
+# Example with all SSH connection details defined in this file.
+SSH_HOST=server.example.com
+SSH_USER=deploy
+SSH_PORT=22
+REMOTE_BASE=/srv/ssh-lfs
+EOF
+  cat > "$init_config_dir/hosts/ssh-alias-example.host" <<'EOF'
+# Example using an alias defined in ~/.ssh/config.
+# Replace example-server with an actual SSH Host alias.
+SSH_HOST=example-server
+REMOTE_BASE=/srv/example/ssh-lfs
+EOF
+  # Every manifest line is commented deliberately. Users must explicitly choose
+  # which files or directories should be synchronized before the first transfer.
+  cat > "$init_config_dir/ssh-lfs.config" <<'EOF'
+# Each non-comment line defines one relative path to synchronize.
+# The local base is the directory from which ssh-lfs is invoked.
+# The remote base is REMOTE_BASE in the selected host configuration.
+# For example, example_data/ maps to REMOTE_BASE/example_data/ on the remote host.
+# A trailing / follows standard rsync directory semantics.
+
+# example_data/
+# .env
+EOF
+  printf 'Initialized ssh-lfs configuration: %s\n' "$init_config_dir"
+  exit 0
+fi
+
 host_name=$2
 case $direction in push|pull) ;; *) usage >&2; exit 2 ;; esac
 
-# Locate configuration from the script itself, rather than from the current directory.
-# Therefore /path/to/ssh-lfs always uses its accompanying .ssh-lfs configuration.
-script_dir=$(cd -- "$(dirname -- "$0")" && pwd -P)
-project_root=$script_dir
-config_dir=$project_root/.ssh-lfs
+config_dir=$local_base/.ssh-lfs
 manifest=$config_dir/ssh-lfs.config
-# Unlike the configuration root, local_base deliberately records the directory from
-# which the user invoked the command; it is the base for local sync paths.
-local_base=$(pwd -P)
 
 # The host name becomes part of a file path, so only ordinary filename characters
 # are allowed. This prevents a parameter from addressing files outside hosts/.
@@ -109,7 +162,7 @@ while IFS= read -r raw_line || [[ -n $raw_line ]]; do
   # Disallow absolute paths and .. directory traversal. This keeps the remote path
   # inside REMOTE_BASE and prevents pull from writing outside the current directory.
   # Ordinary names containing ".." (for example, a..b) remain valid.
-  [[ $relative_path != /* && $relative_path != .. && $relative_path != ../* && $relative_path != */../* && $relative_path != */.. ]] \
+  is_safe_relative_path "$relative_path" \
     || fail "Line $line_number in $manifest must be a safe relative path"
 
   # Form the two absolute paths by appending the same relative path to each base.
