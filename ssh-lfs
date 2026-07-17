@@ -172,14 +172,20 @@ while IFS= read -r raw_line || [[ -n $raw_line ]]; do
     # push only accepts an existing local item. Create its remote parent, then transfer.
     # rsync -a recursively preserves common attributes; --protect-args handles spaces.
     [[ -e $local_absolute || -L $local_absolute ]] || fail "Local path not found: $relative_path"
-    printf 'push  %s -> %s:%s\n' "$relative_path" "$host_name" "$relative_path"
-    ssh "${ssh_options[@]}" -- "$remote_target" "mkdir -p -- $(printf '%q' "$(dirname -- "$remote_absolute")")"
-    rsync -a --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$local_absolute" "$remote_target:$remote_absolute"
+    # Show the resolved remote absolute path, not only the manifest-relative path.
+    printf 'push  %s -> %s:%s\n' "$relative_path" "$host_name" "$remote_absolute"
+    # This command runs inside the manifest-reading loop. -n prevents ssh from
+    # consuming subsequent manifest lines through the loop's standard input.
+    ssh -n "${ssh_options[@]}" -- "$remote_target" "mkdir -p -- $(printf '%q' "$(dirname -- "$remote_absolute")")"
+    # -h prints human-readable sizes; progress2 reports progress for the complete
+    # transfer rather than resetting for every individual file. rsync also receives
+    # /dev/null as stdin so it cannot consume manifest lines.
+    rsync -ah --info=progress2 --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$local_absolute" "$remote_target:$remote_absolute" </dev/null
   else
     # pull reverses that direction: create the local parent, then fetch the same mapping.
     # If the remote item does not exist, rsync returns non-zero and set -e stops the script.
-    printf 'pull  %s:%s -> %s\n' "$host_name" "$relative_path" "$relative_path"
+    printf 'pull  %s:%s -> %s\n' "$host_name" "$remote_absolute" "$relative_path"
     mkdir -p -- "$(dirname -- "$local_absolute")"
-    rsync -a --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$remote_target:$remote_absolute" "$local_absolute"
+    rsync -ah --info=progress2 --protect-args -e "ssh${SSH_PORT:+ -p $SSH_PORT}" -- "$remote_target:$remote_absolute" "$local_absolute" </dev/null
   fi
 done < "$manifest"
