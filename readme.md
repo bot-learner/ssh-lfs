@@ -7,8 +7,9 @@ files and directories between a local working directory and a remote server over
 SSH, using `rsync`. Run `ssh-lfs init <relative-path>` to create the `.ssh-lfs/`
 configuration template for a project.
 
-The sync list is stored in `.ssh-lfs/ssh-lfs.config`. Each line is one relative
-path. The same relative path is used on both sides:
+Sync lists are stored in `.ssh-lfs/lfs-config/`. Each `.config` file is a named
+sync configuration; each line is one relative path. The same relative path is
+used on both sides:
 
 ```text
 local:  <current-working-directory>/<relative-path>
@@ -76,9 +77,9 @@ usernames, and remote paths, so do not upload it to a repository.**
 
    This creates `.ssh-lfs/hosts/ffu-ssh-example.host`,
    `.ssh-lfs/hosts/ssh-alias-example.host`, and a fully commented
-   `.ssh-lfs/ssh-lfs.config` in the target directory. If `.ssh-lfs/` already
-   exists, `init` does not overwrite any files and reports that the project has
-   already been initialized.
+   `.ssh-lfs/lfs-config/ssh-lfs.config` in the target directory. If `.ssh-lfs/`
+   already exists, `init` does not overwrite any files and reports that the
+   project has already been initialized.
 
 2. Edit one of the generated `.host` files in `.ssh-lfs/hosts/`. Use
    `ffu-ssh-example.host` when the connection details belong in the host file:
@@ -98,8 +99,9 @@ usernames, and remote paths, so do not upload it to a repository.**
    REMOTE_BASE=/srv/ssh-lfs
    ```
 
-3. Edit `.ssh-lfs/ssh-lfs.config` to list the relative files and directories to
-   synchronize. Blank lines and lines beginning with `#` are ignored:
+3. Edit `.ssh-lfs/lfs-config/ssh-lfs.config` to list the relative files and
+   directories to synchronize. Blank lines and lines beginning with `#` are
+   ignored:
 
    ```text
    example_data/
@@ -107,12 +109,18 @@ usernames, and remote paths, so do not upload it to a repository.**
    ```
 
 4. Run the command from the initialized local project directory, which contains
-   both the listed paths and `.ssh-lfs/`:
+   both the listed paths and `.ssh-lfs/`. The optional final argument selects a
+   file in `.ssh-lfs/lfs-config/`; omit the `.config` extension if preferred:
 
    ```sh
    ssh-lfs push ffu-ssh-example
    ssh-lfs pull ffu-ssh-example
+   ssh-lfs push ffu-ssh-example ssh-lfs-l
    ```
+
+   The first two commands select the default `ssh-lfs.config`; the last one
+   selects `ssh-lfs-l.config`. This lets separate file groups be synchronized
+   independently.
 
    To synchronize a different local directory, first run `ssh-lfs init .` there.
    Once initialized, simply run the installed command from that directory:
@@ -123,5 +131,17 @@ usernames, and remote paths, so do not upload it to a repository.**
 
 This repository includes `example_data/` as sample content. To synchronize a
 directory with that name in your own project, uncomment or add `example_data/`
-in `.ssh-lfs/ssh-lfs.config`, configure one of the generated host files, and run
+in `.ssh-lfs/lfs-config/ssh-lfs.config`, configure one of the generated host files, and run
 the corresponding `ssh-lfs push` command.
+
+### 2.3 Lightweight Project Configuration
+
+This project also includes `.ssh-lfs/lfs-config/ssh-lfs-l.config` as a
+lightweight transfer list. It deliberately contains only:
+
+```text
+example_data/example.txt
+```
+
+Run `ssh-lfs push <host-name> ssh-lfs-l` to use this configuration, rather than
+the complete `example_data/` directory.

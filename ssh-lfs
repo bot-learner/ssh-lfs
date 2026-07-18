@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ssh-lfs synchronizes files over SSH with rsync, using a local .ssh-lfs configuration.
 #
-# Run: ssh-lfs <push|pull> <host-name>
+# Run: ssh-lfs <push|pull> <host-name> [config-name]
 #      ssh-lfs init <relative-path>
 # - The directory in which the command is run (pwd) is both the local sync root
 #   and the location from which push/pull loads .ssh-lfs/ configuration.
@@ -19,11 +19,12 @@ PROGRAM_NAME=${0##*/}
 usage() {
   # Keep argument errors brief; see readme.md for full details.
   cat <<EOF
-Usage: $PROGRAM_NAME <push|pull> <host-name>
+Usage: $PROGRAM_NAME <push|pull> <host-name> [config-name]
        $PROGRAM_NAME init <relative-path>
 
 Host configuration: .ssh-lfs/hosts/<host-name>.host
-Sync manifest:      .ssh-lfs/ssh-lfs.config
+Sync configuration:  .ssh-lfs/lfs-config/<config-name>.config
+                    (default: ssh-lfs)
 EOF
 }
 
@@ -49,7 +50,11 @@ is_safe_relative_path() {
   [[ -n $path && $path != /* && $path != .. && $path != ../* && $path != */../* && $path != */.. ]]
 }
 
-[[ $# -eq 2 ]] || { usage >&2; exit 2; }
+if [[ ${1-} == init ]]; then
+  [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+else
+  [[ $# -eq 2 || $# -eq 3 ]] || { usage >&2; exit 2; }
+fi
 direction=$1
 # The current directory intentionally provides both the local base and the project
 # configuration. This is important when ssh-lfs is installed in ~/.local/bin.
@@ -73,7 +78,7 @@ if [[ $direction == init ]]; then
   fi
 
   # mkdir -p also permits initializing a new project directory in one command.
-  mkdir -p -- "$init_config_dir/hosts"
+  mkdir -p -- "$init_config_dir/hosts" "$init_config_dir/lfs-config"
   cat > "$init_config_dir/hosts/ffu-ssh-example.host" <<'EOF'
 # Example with all SSH connection details defined in this file.
 SSH_HOST=server.example.com
@@ -89,7 +94,7 @@ REMOTE_BASE=/srv/example/ssh-lfs
 EOF
   # Every manifest line is commented deliberately. Users must explicitly choose
   # which files or directories should be synchronized before the first transfer.
-  cat > "$init_config_dir/ssh-lfs.config" <<'EOF'
+  cat > "$init_config_dir/lfs-config/ssh-lfs.config" <<'EOF'
 # Each non-comment line defines one relative path to synchronize.
 # The local base is the directory from which ssh-lfs is invoked.
 # The remote base is REMOTE_BASE in the selected host configuration.
@@ -104,10 +109,17 @@ EOF
 fi
 
 host_name=$2
+config_name=${3:-ssh-lfs}
 case $direction in push|pull) ;; *) usage >&2; exit 2 ;; esac
 
 config_dir=$local_base/.ssh-lfs
-manifest=$config_dir/ssh-lfs.config
+[[ $config_name =~ ^[A-Za-z0-9._-]+$ ]] || fail "Invalid config name: $config_name"
+# Accept either `ssh-lfs-l` or the explicit filename `ssh-lfs-l.config`.
+if [[ $config_name == *.config ]]; then
+  manifest=$config_dir/lfs-config/$config_name
+else
+  manifest=$config_dir/lfs-config/$config_name.config
+fi
 
 # The host name becomes part of a file path, so only ordinary filename characters
 # are allowed. This prevents a parameter from addressing files outside hosts/.
